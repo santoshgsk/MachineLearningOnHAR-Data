@@ -1,0 +1,132 @@
+---
+title: 'Human Activity Recognition : A Machine-Learning Perspective'
+output: html_document
+---
+### Introduction
+Human Activity Recognition is gaining importance as they have many potential applications like elderly monitoring, life log systems for monitoring energy expenditure and so on. The wearable gadgets like Jawbone Up, Nike fuelband are able to collect the data and powerful Machine Learning algorithms are able to recognize the Human Activity using the data collected. Here, a classification problem with 5 target classes is assigned towards the Course project. 
+
+### Getting the Data
+Lets have a look at the data
+```{r, cache=TRUE}
+setwd("C:\\Users\\santo_000\\Desktop\\Coursera\\Machine Learning\\MachineLearningOnHAR-Data")
+trainCSV <- read.csv("pml-training.csv", na.strings=c(NA, ""))
+str(trainCSV)
+
+dim(trainCSV)
+```
+
+### Cleaning the Data
+There are a lot of columns predominantly with NAs. Removing such columns would be important before we try to fit any model. The below code snippet eliminates such rows.
+```{r, cache=TRUE}
+naCols <- sapply(trainCSV, function(x){ifelse (0.9*length(x) < sum(is.na(x)), TRUE, FALSE)})
+trainCSV <- trainCSV[,!naCols]
+trainCSV <- trainCSV[,-1]  # ignoring the index column as this is not time series data
+ncol(trainCSV)     # no of columns remaining after remove the columns with NA values
+```
+The idea being, any column with NA values filled in more than 90% of its length need to be discarded. As the number of rows of the training set is huge, having such columns with very sparse data would mislead the model.
+
+### Pre-processing the Data
+After having removed all the junk columns from the dataset, we now remain with 59 columns out of the initial 160 columns which is a great dimensionality reduction step. However, it still remains to perform pre-processing steps which considers the relationship of variables among the given dataset and further reduces the dimensionality. 
+
+#### Removing the factor variables
+The data provided here has few factor varibles which are observed to be not in any way related to the class output and hence such factors can be excluded.
+```{r, cache=TRUE}
+classeVar <- trainCSV$classe
+trainCSV <- trainCSV[,!sapply(trainCSV, is.factor)]
+trainCSV$classe <- classeVar
+ncol(trainCSV) #no of columns remaining after removing the factor variables
+```
+
+#### Correlation among Predictors
+Predictors which are highly correlated among themselves would make the values redundant thus resulting in a poor fit of the model. It is necessary to remove the correlated predictors to improve the model performance.
+```{r, cache=TRUE}
+corTrain <- cor(trainCSV[,c(!names(trainCSV) %in% c("classe"))])  #ignoring the classe variable
+summary(corTrain[upper.tri(corTrain)])
+```
+The max value suggests that there are highly correlated variables. Hence, finding correlated 
+variables would result in
+
+```{r, results='hide'}
+library(caret)
+```
+```{r}
+highlyCorr <- findCorrelation(corTrain, cutoff=0.7)
+trainCSV <- trainCSV[,-highlyCorr]
+corTrain <- cor(trainCSV[,c(!names(trainCSV) %in% c("classe"))])  #ignoring the classe variable
+summary(corTrain[upper.tri(corTrain)])
+```
+The summary of the correlation matrix suggests that the highly correlated predictors has been removed.
+```{r}
+ncol(trainCSV) # no of columns remaining after removing correlated predictors
+```
+
+#### Zero or near-Zero Variance Predictors
+The predictor variables can sometimes have very few unique values that occur with very low frequencies. For many models, this may be fatal. Hence, such variables need to be discarded. The below functionality provides us with such information. 
+```{r, cache=TRUE}
+library(kernlab)
+nzv <- nearZeroVar(trainCSV, saveMetrics=TRUE)
+nzv
+```
+Based on the metrics, "frequency ratio" and "percent of unique values", the high variance predictors can be identified. Having a threshold limit for both the metrics and disregarding the variables which have the metrics values below the thresholds has left us with 10 predictors.
+```{r, cache=TRUE}
+desiredCols <- names(trainCSV)[(nzv$freqRatio>10 | nzv$percentUnique >10)]
+desiredCols
+trainCSV <- trainCSV[,desiredCols]
+trainCSV$classe <- classeVar
+names(trainCSV)
+```
+Except for `raw_timestamp_part_2` and `c("roll_dumbbell", "pitch_dumbbell", "yaw_dumbbell")` the rest all have good frequency ratio and percent of unique values. Hence two set of models can be built, one way is to combine `raw_timestamp_part_2` with high frequent variables and the other way to model is combining `c("roll_dumbbell", "pitch_dumbbell", "yaw_dumbbell")` with high frequent variables.
+
+#### Fitting models
+With the reference to the lecture notes, that random forests algorithm is superior to others for the task of classification, it would be a good way to begin with random forests as our classifying algorithm. 
+
+##### Model 1
+In this experiment, we will be having the following variables as predictors
+```{r}
+desiredCols[2:10]
+```
+
+#### Cross vaidation 
+We will be splitting the data into train and cross validation sets in order to test the out-of-sample performance of the fitted models.
+```{r, cache=TRUE}
+
+modelOneData <- trainCSV[,c(names(trainCSV) %in% desiredCols[2:10])]
+modelOneData$classe <- trainCSV$classe
+inTrain <- createDataPartition(y=modelOneData$classe, p=0.7, list=FALSE)
+trainingSet <- modelOneData[inTrain,]
+testingSet <- modelOneData[-inTrain,]
+dim(trainingSet)
+dim(testingSet)
+model1 <- train(classe ~ ., method="rf", data=trainingSet)
+confusionMatrix(predict(model1, testingSet), testingSet$classe)
+```
+The model1 is performing with an accuracy of `93.5%` and Kappa value of `91.7` on the out-of-sample data.
+
+##### In-sample accuracy of model-1
+```{r}
+confusionMatrix(predict(model1, trainingSet), trainingSet$classe)
+```
+
+The second model will be having the following features
+```{r, cache=TRUE}
+
+desiredCols[1:7]
+modelTwoData <- trainCSV[,c(names(trainCSV) %in% desiredCols[1:7])]
+modelTwoData$classe <- trainCSV$classe
+inTrain <- createDataPartition(y=modelTwoData$classe, p=0.7, list=FALSE)
+trainingSet <-modelTwoData[inTrain,]
+testingSet <- modelTwoData[-inTrain,]
+dim(trainingSet)
+dim(testingSet)
+model2 <- train(classe ~ ., method="rf", data=trainingSet)
+confusionMatrix(predict(model2, testingSet), testingSet$classe)
+```
+However, the model2 is performing with an accuracy of `81.3%` and Kappa value of `76.3` on out-of-sample data. Clearly, the model2 is outperformed by model1 looking at the performance measures on out-of-sample data.
+
+##### In-sample accuracy of model-2
+```{r}
+confusionMatrix(predict(model2, trainingSet), trainingSet$classe)
+```
+
+
+This concludes that model1 is having better out-of-sample prediction and hence it would be expected to bring good results on testing data after the model is re-trained using the entire training data. The model1 is also displaying better in-sample accuracies over model2.
